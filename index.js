@@ -24,8 +24,6 @@ const moedasParaBanco = {
   'UYU': 15,
 };
 
-// ... (todas as suas outras funções continuam exatamente iguais) ...
-
 function getDataFormatada() {
   const hoje = new Date();
   const ano = hoje.getFullYear();
@@ -45,7 +43,7 @@ function getDataDeAmanhaFormatada() {
 
 async function inserirNoBanco(cotacoesParaInserir) {
   if (cotacoesParaInserir.length === 0) {
-    console.log("Nenhuma cotação para inserir no banco de dados.");
+    console.log("Nenhuma das moedas de interesse foi encontrada para inserir.");
     return;
   }
   
@@ -61,7 +59,8 @@ async function inserirNoBanco(cotacoesParaInserir) {
 
     for (const cotacao of cotacoesParaInserir) {
       const codigoMoeda = moedasParaBanco[cotacao.simbolo];
-      const taxaVenda = parseFloat(cotacao.venda.replace(',', '.'));
+      const valorStringCorrigido = cotacao.venda.replace(/\./g, '').replace(',', '.');
+      const taxaVenda = parseFloat(valorStringCorrigido);
 
       const query = `
         INSERT INTO moeda_cambio (moeda, datacambio, dtinc, dtalt, valor) 
@@ -83,6 +82,7 @@ async function inserirNoBanco(cotacoesParaInserir) {
   }
 }
 
+// CORREÇÃO FINAL APLICADA AQUI NOS ÍNDICES DAS COLUNAS
 async function buscarEInserirCotacoes() {
   const url = "https://ptax.bcb.gov.br/ptax_internet/consultarTodasAsMoedas.do?method=consultaTodasMoedas";
   console.log(`\n[${new Date().toLocaleString('pt-BR')}] Executando a busca por cotações...`);
@@ -96,9 +96,11 @@ async function buscarEInserirCotacoes() {
 
     $("table tbody tr").each((i, el) => {
       const colunas = $(el).find("td");
-      const simbolo = $(colunas[2]).text().trim();
-      const compra = $(colunas[4]).text().trim();
-      const venda = $(colunas[5]).text().trim();
+      
+      // ÍNDICES CORRIGIDOS COM BASE NO SEU HTML:
+      const simbolo = $(colunas[2]).text().trim();  // 3ª coluna (ex: "USD")
+      const compra = $(colunas[3]).text().trim();   // 4ª coluna (Taxa Compra)
+      const venda = $(colunas[4]).text().trim();    // 5ª coluna (Taxa Venda - O VALOR CORRETO)
 
       if (simbolo && compra && venda) {
         moedasEncontradas.push({ simbolo, compra, venda });
@@ -120,14 +122,16 @@ async function buscarEInserirCotacoes() {
   }
 }
 
-// --- AGENDADOR DE TAREFAS ---
-// Formato: 'minuto hora * * *' (todos os dias do mês, todos os meses, todos os dias da semana)
+// --- INICIALIZAÇÃO E AGENDAMENTO ---
+//console.log('Executando a tarefa pela primeira vez ao iniciar...');
+//buscarEInserirCotacoes();
+
 cron.schedule('30 17 * * *', () => {
   console.log('Disparando a tarefa agendada para as 17:30...');
   buscarEInserirCotacoes();
 }, {
   scheduled: true,
-  timezone: "America/Sao_Paulo" // IMPORTANTE: Defina o fuso horário correto
+  timezone: "America/Sao_Paulo"
 });
 
 console.log('Agendador iniciado. O script irá rodar todos os dias às 17:30 (horário de São Paulo).');
