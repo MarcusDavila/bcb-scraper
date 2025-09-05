@@ -1,7 +1,8 @@
-require('dotenv').config(); // Carrega as variáveis do arquivo .env
+require('dotenv').config();
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { Client } = require('pg');
+const cron = require('node-cron'); // NOVO: Importa a biblioteca de agendamento
 
 // --- CONFIGURAÇÃO DO BANCO DE DADOS (lido do arquivo .env) ---
 const dbConfig = {
@@ -13,7 +14,6 @@ const dbConfig = {
 };
 
 // --- CONFIGURAÇÃO DAS MOEDAS DE INTERESSE ---
-// Mapeia o SÍMBOLO da moeda para o CÓDIGO da sua tabela
 const moedasParaBanco = {
   'PYG': 319,
   'EUR': 13,
@@ -24,7 +24,8 @@ const moedasParaBanco = {
   'UYU': 15,
 };
 
-// Retorna a data de HOJE no formato YYYY-MM-DD - porem codigo so pode ser executado as 17hrs pois o ptax eh inserido apos as 13hrs sem horario definido
+// ... (todas as suas outras funções continuam exatamente iguais) ...
+
 function getDataFormatada() {
   const hoje = new Date();
   const ano = hoje.getFullYear();
@@ -33,7 +34,6 @@ function getDataFormatada() {
   return `${ano}-${mes}-${dia}`;
 }
 
-// Retorna a data de AMANHÃ no formato YYYY-MM-DD, conforme os outros registros desta tabela
 function getDataDeAmanhaFormatada() {
   const amanha = new Date();
   amanha.setDate(amanha.getDate() + 1);
@@ -43,7 +43,6 @@ function getDataDeAmanhaFormatada() {
   return `${ano}-${mes}-${dia}`;
 }
 
-// Função para inserir os dados no banco de dados
 async function inserirNoBanco(cotacoesParaInserir) {
   if (cotacoesParaInserir.length === 0) {
     console.log("Nenhuma cotação para inserir no banco de dados.");
@@ -62,7 +61,6 @@ async function inserirNoBanco(cotacoesParaInserir) {
 
     for (const cotacao of cotacoesParaInserir) {
       const codigoMoeda = moedasParaBanco[cotacao.simbolo];
-      // Converte o valor de "123,45" para o número 123.45
       const taxaVenda = parseFloat(cotacao.venda.replace(',', '.'));
 
       const query = `
@@ -85,10 +83,10 @@ async function inserirNoBanco(cotacoesParaInserir) {
   }
 }
 
-// Função principal que orquestra o processo
 async function buscarEInserirCotacoes() {
   const url = "https://ptax.bcb.gov.br/ptax_internet/consultarTodasAsMoedas.do?method=consultaTodasMoedas";
-  console.log('Buscando cotações de:', url);
+  console.log(`\n[${new Date().toLocaleString('pt-BR')}] Executando a busca por cotações...`);
+  console.log('Buscando de:', url);
 
   try {
     const { data } = await axios.get(url);
@@ -109,15 +107,10 @@ async function buscarEInserirCotacoes() {
 
     if (moedasEncontradas.length > 0) {
       console.log(`Sucesso! Encontradas ${moedasEncontradas.length} cotações.`);
-
-      // Filtra as cotações para pegar apenas as de interesse
       const cotacoesParaBanco = moedasEncontradas.filter(moeda => 
         Object.keys(moedasParaBanco).includes(moeda.simbolo)
       );
-      
-      // Chama a função para inserir no banco de dados
       await inserirNoBanco(cotacoesParaBanco);
-
     } else {
       console.log('Não foram encontradas cotações na página da PTAX.');
     }
@@ -127,5 +120,15 @@ async function buscarEInserirCotacoes() {
   }
 }
 
-// Inicia o processo
-buscarEInserirCotacoes();
+// --- AGENDADOR DE TAREFAS ---
+// Formato: 'minuto hora * * *' (todos os dias do mês, todos os meses, todos os dias da semana)
+cron.schedule('30 17 * * *', () => {
+  console.log('Disparando a tarefa agendada para as 17:30...');
+  buscarEInserirCotacoes();
+}, {
+  scheduled: true,
+  timezone: "America/Sao_Paulo" // IMPORTANTE: Defina o fuso horário correto
+});
+
+console.log('Agendador iniciado. O script irá rodar todos os dias às 17:30 (horário de São Paulo).');
+console.log('Mantenha este processo em execução. Pressione CTRL+C para parar.');
