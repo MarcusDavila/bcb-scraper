@@ -2,7 +2,7 @@ require('dotenv').config();
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { Client } = require('pg');
-const cron = require('node-cron'); // NOVO: Importa a biblioteca de agendamento
+const cron = require('node-cron'); 
 
 // --- CONFIGURAÇÃO DO BANCO DE DADOS (lido do arquivo .env) ---
 const dbConfig = {
