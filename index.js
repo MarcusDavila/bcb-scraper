@@ -1,8 +1,56 @@
 require('dotenv').config();
 const axios = require('axios');
-const cheerio =require('cheerio');
+const cheerio = require('cheerio');
 const { Client } = require('pg');
-const cron = require('node-cron'); 
+const cron = require('node-cron');
+
+// --- APERFEIÇOAMENTO DOS LOGS ---
+// Guardamos as funções originais do console para poder usá-las mais tarde.
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+const originalInfo = console.info;
+
+// Função para formatar a data e hora no fuso horário local
+const getTimestamp = () => {
+  return new Date().toLocaleString('pt-BR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    fractionalSecondDigits: 3,
+    hour12: false
+  });
+};
+
+// Sobrescrevemos console.log
+console.log = function(...args) {
+  const timestamp = getTimestamp();
+ 
+  // O '...args' garante que todos os argumentos originais (ex: console.log('texto', objeto)) sejam passados.
+  originalLog(`[${timestamp}] [INFO]:`, ...args);
+};
+
+// Fazemos o mesmo para console.error para padronizar os erros
+console.error = function(...args) {
+  const timestamp = getTimestamp();
+  originalError(`[${timestamp}] [ERROR]:`, ...args);
+};
+
+// E também para console.warn e console.info, para um log completo
+console.warn = function(...args) {
+  const timestamp = getTimestamp();
+  originalWarn(`[${timestamp}] [WARN]:`, ...args);
+};
+
+console.info = function(...args) {
+    const timestamp = getTimestamp();
+    originalInfo(`[${timestamp}] [INFO]:`, ...args);
+};
+
+
 
 const dbConfig = {
   user: process.env.DB_USER,
@@ -39,14 +87,14 @@ function getDataDeAmanhaFormatada() {
   return `${ano}-${mes}-${dia}`;
 }
 
-// FUNÇÃO ATUALIZADA COM LÓGICA DE UPSERT
+
 async function inserirNoBanco(cotacoesParaInserir) {
   if (cotacoesParaInserir.length === 0) {
-    console.log("Nenhuma das moedas de interesse foi encontrada para inserir.");
+    console.warn("Nenhuma das moedas de interesse foi encontrada para inserir.");
     return;
   }
-  
-  console.log(`Iniciando operação de Upsert para ${cotacoesParaInserir.length} cotações no banco de dados...`);
+
+  console.log(`Iniciando operação de inserção para ${cotacoesParaInserir.length} cotações no banco de dados...`);
   const client = new Client(dbConfig);
 
   try {
@@ -56,26 +104,40 @@ async function inserirNoBanco(cotacoesParaInserir) {
     const dataCambio = getDataDeAmanhaFormatada();
     const dataHoje = getDataFormatada();
 
+    // 1. Consultar moedas que JÁ EXISTEM para a data de amanhã
+    const selectQuery = 'SELECT moeda FROM moeda_cambio WHERE datacambio = $1';
+    const res = await client.query(selectQuery, [dataCambio]);
+    
+    // 2. Criar um conjunto (Set) com os códigos das moedas existentes para busca rápida
+    const moedasExistentes = new Set(res.rows.map(row => row.moeda));
+    console.log(`Encontradas ${moedasExistentes.size} moedas já cadastradas para ${dataCambio}.`);
+
+
     for (const cotacao of cotacoesParaInserir) {
       const codigoMoeda = moedasParaBanco[cotacao.simbolo];
+
+      // 3. VERIFICAR se a moeda já existe antes de tentar inserir
+      if (moedasExistentes.has(codigoMoeda)) {
+        console.log(` -> Moeda ${cotacao.simbolo} (código ${codigoMoeda}) já existe para ${dataCambio}. Pulando inserção.`);
+        continue; // Pula para a próxima iteração do loop
+      }
+
+      // Se não existe, procede com a inserção
       const valorStringCorrigido = cotacao.venda.replace(/\./g, '').replace(',', '.');
       const taxaVenda = parseFloat(valorStringCorrigido);
 
-      const query = `
-        INSERT INTO moeda_cambio (moeda, datacambio, dtinc, dtalt, valor) 
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (moeda, datacambio) DO UPDATE SET
-          valor = EXCLUDED.valor,
-          dtalt = EXCLUDED.dtalt;
+      const insertQuery = `
+        INSERT INTO moeda_cambio (moeda, datacambio, dtinc, dtalt, valor)
+        VALUES ($1, $2, $3, $4, $5);
       `;
-      
+
       const values = [codigoMoeda, dataCambio, dataHoje, dataHoje, taxaVenda];
 
-      await client.query(query, values);
-      console.log(` -> Moeda ${cotacao.simbolo} (código ${codigoMoeda}) processada com valor ${taxaVenda}.`);
+      await client.query(insertQuery, values);
+      console.log(` -> Moeda ${cotacao.simbolo} (código ${codigoMoeda}) INSERIDA com valor ${taxaVenda}.`);
     }
-    
-    console.log("Operação de Upsert no banco de dados concluída com sucesso.");
+
+    console.log("Operação de inserção no banco de dados concluída.");
 
   } catch (error) {
     console.error('Erro durante a operação com o banco de dados:', error.message);
@@ -87,7 +149,8 @@ async function inserirNoBanco(cotacoesParaInserir) {
 
 async function buscarEInserirCotacoes() {
   const url = "https://ptax.bcb.gov.br/ptax_internet/consultarTodasAsMoedas.do?method=consultaTodasMoedas";
-  console.log(`\n[${new Date().toLocaleString('pt-BR')}] Executando a busca por cotações...`);
+ 
+  console.log("Executando a busca por cotações...");
   console.log('Buscando de:', url);
 
   try {
@@ -108,12 +171,12 @@ async function buscarEInserirCotacoes() {
 
     if (moedasEncontradas.length > 0) {
       console.log(`Sucesso! Encontradas ${moedasEncontradas.length} cotações.`);
-      const cotacoesParaBanco = moedasEncontradas.filter(moeda => 
+      const cotacoesParaBanco = moedasEncontradas.filter(moeda =>
         Object.keys(moedasParaBanco).includes(moeda.simbolo)
       );
       await inserirNoBanco(cotacoesParaBanco);
     } else {
-      console.log('Não foram encontradas cotações na página da PTAX.');
+      console.warn('Não foram encontradas cotações na página da PTAX.');
     }
   } catch (error) {
     console.error('Erro ao buscar ou processar as cotações da PTAX:', error.message);
